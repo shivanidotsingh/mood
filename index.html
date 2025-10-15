@@ -504,32 +504,86 @@
     <div id="caption-display" class="caption-display"></div>
 
     <script>
-        const galleryContainer = document.getElementById('gallery-container');
-        const captionDisplay = document.getElementById('caption-display'); // Get the new caption display div
+  // --- Infinite loading without breaking layout/captions ---
+  const galleryContainer = document.getElementById('gallery-container');
+  const captionDisplay = document.getElementById('caption-display');
 
+  // 1) Move all items into a queue, cancel initial image loads,
+  //    and store URLs in data-src so we control when they load.
+  const queue = [];
+  Array.from(galleryContainer.children).forEach((item) => {
+    if (!item.classList.contains('gallery-item')) return;
+    const img = item.querySelector('img');
+    if (img && img.src) {
+      img.dataset.src = img.src;       // stash the URL
+      img.removeAttribute('src');      // cancel any eager load
+      img.removeAttribute('loading');  // ignore native lazy
+    }
+    queue.push(item);
+  });
+  galleryContainer.innerHTML = ""; // start empty (layout remains intact due to aspect-ratio)
 
-        // --- New JavaScript for Caption Display ---
-        galleryContainer.addEventListener('mouseover', (event) => {
-            const galleryItem = event.target.closest('.gallery-item'); // Find the closest gallery-item ancestor
-            if (galleryItem) {
-                const caption = galleryItem.dataset.caption; // Get caption from data-caption attribute
+  // 2) Add a sentinel that spans the grid to trigger next loads
+  const sentinel = document.createElement('div');
+  sentinel.setAttribute('aria-hidden', 'true');
+  sentinel.style.height = '1px';
+  sentinel.style.gridColumn = '1 / -1';
+  galleryContainer.appendChild(sentinel);
 
-                // Only show if caption exists and is not empty or just whitespace
-                if (caption && caption.trim() !== '') {
-                    captionDisplay.textContent = caption;
-                    captionDisplay.style.display = 'block'; // Make it visible
-                } else {
-                    captionDisplay.style.display = 'none'; // Hide if no caption
-                }
-            }
-        });
+  // 3) Batch append items
+  const BATCH_SIZE = 24;
+  function appendNextBatch() {
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < BATCH_SIZE && queue.length; i++) {
+      const item = queue.shift();
+      const img = item.querySelector('img');
+      if (img && img.dataset.src) {
+        img.src = img.dataset.src; // start loading now
+      }
+      fragment.appendChild(item);
+    }
+    // Keep sentinel at the end
+    galleryContainer.insertBefore(fragment, sentinel);
+    if (!queue.length) {
+      // No more items—cleanup observer & sentinel
+      if (observer) observer.disconnect();
+      sentinel.remove();
+    }
+  }
 
-        galleryContainer.addEventListener('mouseout', (event) => {
-            // Hide the caption display when mouse leaves the gallery area
-            captionDisplay.textContent = ''; // Clear text
-            captionDisplay.style.display = 'none'; // Hide it
-        });
-        // --- End New JavaScript for Caption Display ---
-    </script>
+  // 4) Observe near-bottom and load more ahead of time
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) appendNextBatch();
+      });
+    },
+    { root: null, rootMargin: '1200px 0px', threshold: 0 }
+  );
+  observer.observe(sentinel);
+
+  // Kick off with the first batch immediately
+  appendNextBatch();
+
+  // 5) Caption hover (unchanged)
+  galleryContainer.addEventListener('mouseover', (event) => {
+    const galleryItem = event.target.closest('.gallery-item');
+    if (galleryItem) {
+      const caption = galleryItem.dataset.caption;
+      if (caption && caption.trim() !== '') {
+        captionDisplay.textContent = caption;
+        captionDisplay.style.display = 'block';
+      } else {
+        captionDisplay.style.display = 'none';
+      }
+    }
+  });
+
+  galleryContainer.addEventListener('mouseout', () => {
+    captionDisplay.textContent = '';
+    captionDisplay.style.display = 'none';
+  });
+</script>
+
 </body>
 </html>
